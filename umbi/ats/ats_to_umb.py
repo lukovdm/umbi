@@ -91,6 +91,7 @@ def explicit_umb_to_explicit_ats(umb: umbi.umb.ExplicitUmb) -> SimpleAts:
                 "rewards": ats.new_reward_annotation,
                 "aps": ats.new_ap_annotation,
             }[category] or (lambda **kwargs: ats.new_annotation(category, **kwargs))
+            ats.annotations[category] = dict[str, Annotation]()
             for name, umb_annotation in name_to_annotation.items():
                 ats_annotation = constructor(
                     name=name,
@@ -101,7 +102,6 @@ def explicit_umb_to_explicit_ats(umb: umbi.umb.ExplicitUmb) -> SimpleAts:
                     values = umb.annotations[category][name][applies_to]
                     entity_class = EntityClass(applies_to)
                     ats_annotation.set_values_for(entity_class, values)
-                ats.annotations[category] = dict[str, Annotation]()
                 ats.annotations[category][name] = ats_annotation
 
     # load observations
