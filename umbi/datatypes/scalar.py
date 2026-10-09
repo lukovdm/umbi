@@ -134,8 +134,20 @@ def promote_scalars_to(scalars: Sequence[Scalar], target_type: ScalarType) -> li
     return [promote_scalar_to(s, target_type) for s in scalars]
 
 
+#: Scalar type of values of these exact Python types, which promote to themselves.
+_SELF_PROMOTING_TYPES: dict[type, ScalarType] = {
+    bool: PrimitiveType.BOOL,
+    int: NumericPrimitiveType.INT,
+    float: NumericPrimitiveType.DOUBLE,
+}
+
+
 def promote_scalars(scalars: Sequence[Scalar]) -> tuple[ScalarType, list[Scalar]]:
     """Promote a sequence of scalars to the common promotion type determined automatically."""
+    kinds = set(map(type, scalars))
+    if len(kinds) == 1 and (kind := kinds.pop()) in _SELF_PROMOTING_TYPES:
+        # fast path: all values have the same type and are kept as they are
+        return _SELF_PROMOTING_TYPES[kind], list(scalars)
     target_type = scalar_promotion_type_of(scalars)
     vector = promote_scalars_to(scalars, target_type)
     return target_type, vector

@@ -218,7 +218,7 @@ class EntityValuations:
         """Gets the variable valuations for a given entity index as a tuple in the specified variable order."""
         if variable_order is None:
             variable_order = list(self._variable_to_valuations.keys())
-        return tuple(self.get_entity_valuation(entity)[variable] for variable in variable_order)
+        return tuple(self._variable_to_valuations[variable].values[entity] for variable in variable_order)
 
     def set_entity_valuation(self, entity: int, valuation: EntityValuation) -> None:
         """Adds a new entity with the given variable valuations."""
@@ -233,7 +233,11 @@ class EntityValuations:
     @property
     def has_distinct_valuations(self) -> bool:
         """Determines whether the variable valuations are distinct across all entities."""
-        valuations = [self.get_entity_valuation_tuple(entity) for entity in range(self.entity_space.num_entities)]
+        columns = [variable_valuation.values for variable_valuation in self._variable_to_valuations.values()]
+        if not columns:
+            # every entity has the empty valuation
+            return self.entity_space.num_entities <= 1
+        valuations = list(zip(*columns))
         return len(valuations) == len(set(valuations))
 
     def sync_domains(self) -> None:

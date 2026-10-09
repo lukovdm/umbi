@@ -55,6 +55,8 @@ def promote_numeric_to(value: Numeric, target_type: NumericType) -> Numeric:
 
 def is_numeric_a_probability(value: Numeric) -> bool:
     """Check if a numeric value is in the interval [0, 1]."""
+    if type(value) is float:  # the common case, checked first for speed
+        return 0 <= value <= 1
     if isinstance(value, NumericPrimitive):
         return 0 <= value <= 1
     else:  # isinstance(value, Interval):

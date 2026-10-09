@@ -173,3 +173,41 @@ class TestInvalidVectorInputs:
 
         result = vector_to_bytes([], sized_type)
         assert result == b""
+
+
+class TestVectorFastPathsMatchGeneralPath:
+    """The single-call (de)serialization of numeric vectors must match the per-element one."""
+
+    @pytest.mark.parametrize("little_endian", [True, False])
+    def test_numeric_vectors(self, little_endian):
+        import random
+
+        from umbi.binary.scalar import bytes_to_scalar, scalar_to_bytes
+        from umbi.binary.sized_type import SizedType
+        from umbi.datatypes import NumericPrimitiveType
+
+        rng = random.Random(0)
+        for value_type, size in [
+            (NumericPrimitiveType.INT, 8), (NumericPrimitiveType.INT, 16), (NumericPrimitiveType.INT, 32),
+            (NumericPrimitiveType.INT, 64), (NumericPrimitiveType.UINT, 8), (NumericPrimitiveType.UINT, 16),
+            (NumericPrimitiveType.UINT, 32), (NumericPrimitiveType.UINT, 64), (NumericPrimitiveType.DOUBLE, 64),
+        ]:  # fmt: skip
+            sized_type = SizedType(value_type, size)
+            if value_type == NumericPrimitiveType.DOUBLE:
+                vector = [rng.uniform(-1e9, 1e9) for _ in range(100)]
+            elif value_type == NumericPrimitiveType.INT:
+                vector = [rng.randint(-(1 << (size - 1)), (1 << (size - 1)) - 1) for _ in range(100)]
+            else:
+                vector = [rng.randint(0, (1 << size) - 1) for _ in range(100)]
+            data = vector_to_bytes(vector, sized_type, little_endian)
+            assert data == b"".join(scalar_to_bytes(v, value_type, size // 8, little_endian) for v in vector)
+            assert bytes_to_vector(data, sized_type, little_endian) == [
+                bytes_to_scalar(data[i : i + size // 8], value_type, little_endian) for i in range(0, len(data), size // 8)
+            ]
+
+    def test_out_of_range_still_raises(self):
+        from umbi.binary.sized_type import SizedType
+        from umbi.datatypes import NumericPrimitiveType
+
+        with pytest.raises(OverflowError):
+            vector_to_bytes([1, 256], SizedType(NumericPrimitiveType.UINT, 8))

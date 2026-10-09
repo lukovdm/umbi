@@ -302,13 +302,17 @@ class EntityMapping(list[T]):
 
     def _on_new_domain_entity(self, entity: int):
         assert entity == len(self), f"Invalid entity index {entity} for addition, expected {len(self)}."
-        logger.debug(f"{self.name}: adding new entity {entity} with default value {self._default_value()}")
-        self.append(self._default_value())  # type: ignore[assignment]
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"{self.name}: adding new entity {entity} with default value {self._default_value()}")
+        self.append(self.default_factory() if self.default_factory is not None else None)  # type: ignore[arg-type]
 
     def _on_new_domain_entities(self, num_new_entities: int):
         assert len(self) + num_new_entities == self.domain.num_entities
         logger.debug(f"{self.name}: adding {num_new_entities} new entities with default value {self._default_value()}")
-        self.extend(self._default_value() for _ in range(num_new_entities))  # type: ignore[assignment]
+        if self.default_factory is None:
+            self.extend([None] * num_new_entities)  # type: ignore[list-item]
+        else:
+            self.extend(self.default_factory() for _ in range(num_new_entities))
 
     def _on_remove_domain_entity(self, entity: int):
         logger.debug(f"{self.name}: removing domain entity {entity}")

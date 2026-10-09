@@ -324,3 +324,71 @@ class TestStructValidation:
 
         with pytest.raises(ValueError):
             struct_type.validate()
+
+
+class TestBytesToStructMatchesUnpacker:
+    """bytes_to_struct must decode exactly like StructUnpacker."""
+
+    @pytest.mark.parametrize("seed", range(50))
+    def test_random_structs(self, seed):
+        import random
+
+        from umbi.binary.struct_type import StructUnpacker
+
+        rng = random.Random(seed)
+        struct_type = StructType()
+        for i in range(rng.randint(1, 8)):
+            kind = rng.choice(["int", "uint", "bool", "string", "double", "padding"])
+            if kind == "padding":
+                struct_type.add_padding(rng.randint(1, 9))
+                continue
+            sized_type = {
+                "int": SizedType(NumericPrimitiveType.INT, rng.randint(2, 40)),
+                "uint": SizedType(NumericPrimitiveType.UINT, rng.randint(1, 40)),
+                "bool": BOOL1,
+                "string": SizedType(PrimitiveType.STRING, 64),
+                "double": SizedType(NumericPrimitiveType.DOUBLE, 64),
+            }[kind]
+            struct_type.add_attribute(f"a{i}", sized_type, is_optional=rng.random() < 0.3)
+        struct_type.pad_to_byte()
+        data = rng.randbytes(struct_type.size_bits // 8)
+        # repr, since random bytes may decode to NaN
+        assert repr(bytes_to_struct(data, struct_type)) == repr(StructUnpacker(data).unpack_struct(struct_type))
+
+
+class TestStructToBytesMatchesPacker:
+    """struct_to_bytes must encode exactly like StructPacker."""
+
+    @pytest.mark.parametrize("seed", range(50))
+    def test_random_structs(self, seed):
+        import random
+
+        from umbi.binary.struct_type import StructPacker
+
+        rng = random.Random(seed)
+        struct_type = StructType()
+        struct: Struct = {}
+        for i in range(rng.randint(1, 8)):
+            kind = rng.choice(["int", "uint", "bool", "string", "double", "padding"])
+            if kind == "padding":
+                struct_type.add_padding(rng.randint(1, 9))
+                continue
+            if kind == "int":
+                size = rng.randint(2, 40)
+                sized_type, value = SizedType(NumericPrimitiveType.INT, size), rng.randint(-(1 << (size - 1)), (1 << (size - 1)) - 1)
+            elif kind == "uint":
+                size = rng.randint(1, 40)
+                sized_type, value = SizedType(NumericPrimitiveType.UINT, size), rng.randint(0, (1 << size) - 1)
+            elif kind == "bool":
+                sized_type, value = BOOL1, rng.random() < 0.5
+            elif kind == "string":
+                sized_type, value = SizedType(PrimitiveType.STRING, 64), rng.randint(0, 1000)
+            else:
+                sized_type, value = SizedType(NumericPrimitiveType.DOUBLE, 64), rng.uniform(-1e6, 1e6)
+            optional = rng.random() < 0.3
+            struct_type.add_attribute(f"a{i}", sized_type, is_optional=optional)
+            # absent optional booleans are rejected by StructPacker
+            absent = optional and kind != "bool" and rng.random() < 0.5
+            struct[f"a{i}"] = None if absent else value
+        struct_type.pad_to_byte()
+        assert struct_to_bytes(struct, struct_type) == StructPacker().pack_struct(struct_type, struct)

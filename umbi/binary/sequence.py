@@ -1,9 +1,10 @@
 """(De)serialization of sequences of common types or structs."""
 
 import logging
+import struct
 from collections.abc import Sequence
 
-from umbi.datatypes import Scalar, ScalarType
+from umbi.datatypes import NumericPrimitiveType, Scalar, ScalarType
 
 from .scalar import (
     bytes_to_scalar,
@@ -60,6 +61,19 @@ def bytes_into_chunks(data: bytes, chunk_size: int) -> list[bytes]:
 
 # Vector (de)serialization
 
+# struct format characters of fixed-width numeric types, by (type, size in bytes)
+_STRUCT_FORMATS = {
+    (NumericPrimitiveType.INT, 1): "b",
+    (NumericPrimitiveType.INT, 2): "h",
+    (NumericPrimitiveType.INT, 4): "i",
+    (NumericPrimitiveType.INT, 8): "q",
+    (NumericPrimitiveType.UINT, 1): "B",
+    (NumericPrimitiveType.UINT, 2): "H",
+    (NumericPrimitiveType.UINT, 4): "I",
+    (NumericPrimitiveType.UINT, 8): "Q",
+    (NumericPrimitiveType.DOUBLE, 8): "d",
+}
+
 
 def bytes_to_vector(
     data: bytes, value_sized_type: SizedType | StructType, little_endian: bool = True
@@ -79,6 +93,15 @@ def bytes_to_vector(
 
     assert value_sized_type.is_byte_aligned, "expected a byte-aligned type as chunk sizes"
     chunk_size = value_sized_type.size_bytes
+
+    # Fast path: decode the whole vector in a single call.
+    if not isinstance(value_sized_type, StructType):
+        code = _STRUCT_FORMATS.get((value_sized_type.type, chunk_size))  # type: ignore[arg-type]
+        if code is not None:
+            assert len(data) % chunk_size == 0, f"expected {len(data)} to be divisible by {chunk_size}"
+            ef = "<" if little_endian else ">"
+            return list(struct.unpack(f"{ef}{len(data) // chunk_size}{code}", data))
+
     chunks = bytes_into_chunks(data, chunk_size)
 
     if isinstance(value_sized_type, StructType):
@@ -121,6 +144,18 @@ def vector_to_bytes(
         assert little_endian, "big-endianness for bitvectors is not implemented"
         assert all(isinstance(v, bool) for v in vector), "expected a list of booleans for BOOL1 type"
         return bitvector_to_bytes(vector)  # type: ignore[arg-type]
+
+    # Fast path: encode the whole vector in a single call if all values have the exact expected Python type.
+    if not isinstance(value_sized_type, StructType):
+        code = _STRUCT_FORMATS.get((value_sized_type.type, value_sized_type.size_bytes))  # type: ignore[arg-type]
+        if code is not None:
+            expected = float if code == "d" else int
+            if all(type(v) is expected for v in vector):
+                ef = "<" if little_endian else ">"
+                try:
+                    return struct.pack(f"{ef}{len(vector)}{code}", *vector)
+                except struct.error:
+                    pass  # e.g. out of range, let the general path raise the appropriate error
 
     if isinstance(value_sized_type, StructType):
         assert all(isinstance(v, dict) for v in vector), f"expected a list of structs, got {vector}"

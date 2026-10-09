@@ -268,11 +268,91 @@ class StructPacker:
 # API
 
 
+def _bits_to_scalar_fast(bits: int, num_bits: int, value_type) -> Scalar:
+    """Convert the ``num_bits`` lowest bits of an integer to a scalar."""
+    if value_type == NumericPrimitiveType.UINT or value_type == PrimitiveType.STRING:
+        # a string is stored as an index to the list of strings
+        return bits
+    if value_type == NumericPrimitiveType.INT:
+        return bits - (1 << num_bits) if bits >> (num_bits - 1) else bits
+    if value_type == PrimitiveType.BOOL:
+        return bits != 0
+    return bits_to_scalar(BitArray(uint=bits, length=num_bits), value_type)
+
+
 def bytes_to_struct(bytestring: bytes, struct_type: StructType) -> Struct:
-    """Convert a bytestring to a struct."""
-    return StructUnpacker(bytestring).unpack_struct(struct_type)
+    """Convert a bytestring to a struct.
+
+    Equivalent to ``StructUnpacker(bytestring).unpack_struct(struct_type)``,
+    but reads the fields directly from the bytestring as a little-endian
+    integer: the first field occupies the least significant bits.
+    """
+    value = int.from_bytes(bytestring, "little")
+    num_bits = 8 * len(bytestring)
+    offset = 0
+    name_value: Struct = {}
+    for field in struct_type:
+        size = field.size_bits
+        bits = (value >> offset) & ((1 << size) - 1)
+        offset += size
+        assert offset <= num_bits, "not enough data to fill the buffer"
+        if isinstance(field, StructPadding):
+            continue
+        if field.is_optional:
+            is_present, bits, size = bits & 1, bits >> 1, size - 1
+            if not is_present:
+                name_value[field.name] = None
+                continue
+        name_value[field.name] = _bits_to_scalar_fast(bits, size, field.sized_type.type)
+    if offset % 8 != 0:
+        raise RuntimeError("expected the buffer to be empty")
+    return name_value
+
+
+def _struct_to_int(struct: Struct, struct_type: StructType) -> int | None:
+    """Pack a struct into an integer, the first field in the least significant bits.
+    :return: the packed integer, or None if some field needs the general packer
+    """
+    value = 0
+    offset = 0
+    for field in struct_type:
+        size = field.size_bits
+        if isinstance(field, StructPadding):
+            offset += size
+            continue
+        field_value = struct[field.name]
+        value_type = field.sized_type.type
+        value_size = field.sized_type.size_bits
+        if field_value is None:
+            if not field.is_optional or value_type == PrimitiveType.BOOL:
+                # the general packer rejects absent optional booleans, keep that behaviour
+                return None
+            bits = 0
+        elif type(field_value) is bool and value_type == PrimitiveType.BOOL:
+            bits = int(field_value)
+        elif type(field_value) is int and (
+            value_type == NumericPrimitiveType.UINT or value_type == PrimitiveType.STRING
+        ):
+            if not 0 <= field_value < (1 << value_size):
+                return None
+            bits = field_value
+        elif type(field_value) is int and value_type == NumericPrimitiveType.INT:
+            if not -(1 << (value_size - 1)) <= field_value < (1 << (value_size - 1)):
+                return None
+            bits = field_value & ((1 << value_size) - 1)
+        else:
+            return None
+        if field.is_optional:
+            bits = (bits << 1) | (field_value is not None)
+        value |= bits << offset
+        offset += size
+    return value
 
 
 def struct_to_bytes(struct: Struct, struct_type: StructType) -> bytes:
     """Convert a struct to a bytestring."""
+    if struct_type.is_byte_aligned:
+        value = _struct_to_int(struct, struct_type)
+        if value is not None:
+            return value.to_bytes(struct_type.size_bits // 8, "little")
     return StructPacker().pack_struct(struct_type, struct)

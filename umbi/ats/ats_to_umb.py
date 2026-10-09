@@ -68,20 +68,19 @@ def explicit_umb_to_explicit_ats(umb: umbi.umb.ExplicitUmb) -> SimpleAts:
         ats.branch_action_to_name = umb.branch_action_to_string
 
     if ts.num_choices > 0:
-        for state in ats.states:
-            for choice_idx in range(state_to_choices[state], state_to_choices[state + 1]):
-                choice = ats.new_state_choice(state=state)
-                if ts.num_branches > 0:
-                    assert umb.choice_to_branches is not None, "num_branches > 0 but choice_to_branches is None"
-                    for branch_idx in range(umb.choice_to_branches[choice_idx], umb.choice_to_branches[choice_idx + 1]):
-                        assert umb.branch_to_target is not None, "num_branches > 0 but branch_to_target is None"
-                        target = umb.branch_to_target[branch_idx]
-                        prob = umb.branch_to_probability[branch_idx] if umb.branch_to_probability is not None else None
-                        branch = ats.new_choice_branch(choice=choice, target=target, prob=prob)
-                        if have_branch_actions:
-                            ats.branch_to_branch_action[branch] = umb.branch_to_branch_action[branch_idx]  # type: ignore[subscript]
-                if have_choice_actions:
-                    ats.choice_to_choice_action[choice] = umb.choice_to_choice_action[choice_idx]  # type: ignore[subscript]
+        if ts.num_branches > 0:
+            assert umb.choice_to_branches is not None, "num_branches > 0 but choice_to_branches is None"
+            assert umb.branch_to_target is not None, "num_branches > 0 but branch_to_target is None"
+        ats.new_choices_from_csr(
+            state_to_choices,
+            umb.choice_to_branches if ts.num_branches > 0 else None,
+            umb.branch_to_target,
+            umb.branch_to_probability,
+        )
+        if have_branch_actions:
+            ats.branch_to_branch_action[:] = umb.branch_to_branch_action[: ats.num_branches]  # type: ignore[index]
+        if have_choice_actions:
+            ats.choice_to_choice_action[:] = umb.choice_to_choice_action[: ats.num_choices]  # type: ignore[index]
 
     # load annotations
     if umb.index.annotations is not None:
